@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database Service
+  db:
+    image: postgres:15-alpine
+    container_name: supportdesk_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-supportdesk_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-supportdesk_password}
+      POSTGRES_DB: ${POSTGRES_DB:-supportdesk_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supportdesk_user -d supportdesk_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend Service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: supportdesk_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-supportdesk_user}:${POSTGRES_PASSWORD:-supportdesk_password}@db:5432/${POSTGRES_DB:-supportdesk_db}
+      SLA_HOURS_CRITICAL: 2
+      SLA_HOURS_HIGH: 4
+      SLA_HOURS_MEDIUM: 8
+      SLA_HOURS_LOW: 24
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "alembic upgrade head &&
+             python -m app.seed_data &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  # React Frontend Service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: supportdesk_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  postgres_data:
+    driver: local
